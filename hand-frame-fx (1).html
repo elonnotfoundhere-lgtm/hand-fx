@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hand Frame FX</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --purple: #c4b5fd;
+    --purple-dim: rgba(196,181,253,0.45);
+    --bg: #07070f;
+    --surface: rgba(255,255,255,0.03);
+    --border: rgba(255,255,255,0.07);
+    --text-muted: rgba(255,255,255,0.3);
+    --text-dim: rgba(255,255,255,0.15);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: #fff;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+  }
+
+  #scene {
+    position: relative;
+    width: 640px; height: 480px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    box-shadow: 0 0 80px rgba(196,181,253,0.04), 0 0 0 1px var(--border);
+  }
+
+  #scene canvas {
+    position: absolute; top: 0; left: 0;
+    width: 640px; height: 480px;
+  }
+
+  #glCanvas  { z-index: 1; }
+  #ovCanvas  { z-index: 2; pointer-events: none; }
+
+  video {
+    position: absolute; opacity: 0; pointer-events: none;
+    width: 1px; height: 1px; top: 0; left: 0;
+  }
+
+  /* ── Loading overlay ── */
+  #loading {
+    position: absolute; inset: 0;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px; z-index: 50;
+    transition: opacity .5s ease;
+  }
+  #loading.fade { opacity: 0; pointer-events: none; }
+  #loading.gone { display: none; }
+
+  #loadMsg {
+    font-size: 11px; letter-spacing: .2em;
+    color: var(--text-muted); text-transform: uppercase;
+  }
+
+  .dots { display: flex; gap: 7px; }
+  .dots i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--purple); display: block;
+    animation: dot 1.1s ease-in-out infinite;
+  }
+  .dots i:nth-child(2) { animation-delay: .18s; }
+  .dots i:nth-child(3) { animation-delay: .36s; }
+  @keyframes dot {
+    0%,100% { opacity:.25; transform:scale(.75); }
+    50%      { opacity:1;   transform:scale(1.2); }
+  }
+
+  /* ── HUD ── */
+  #hud {
+    position: absolute; inset: 0;
+    pointer-events: none; z-index: 3;
+  }
+
+  #topBar {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 10px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(to bottom, rgba(7,7,15,.75) 0%, transparent 100%);
+  }
+
+  #effectLabel {
+    font-size: 11px; letter-spacing: .2em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  #effectLabel span {
+    color: var(--purple); font-weight: bold;
+    transition: color .15s;
+  }
+  #effectLabel span.pop {
+    animation: pop .4s ease;
+  }
+  @keyframes pop {
+    0%   { color: #fff; text-shadow: 0 0 14px var(--purple); }
+    100% { color: var(--purple); text-shadow: none; }
+  }
+
+  #handDots {
+    display: flex; gap: 5px; align-items: center;
+  }
+  .hdot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--border);
+    transition: background .2s, box-shadow .2s;
+  }
+  .hdot.on {
+    background: var(--purple);
+    box-shadow: 0 0 6px var(--purple);
+  }
+
+  #bottomBar {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 10px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(to top, rgba(7,7,15,.75) 0%, transparent 100%);
+  }
+
+  #hint {
+    font-size: 10px; letter-spacing: .14em;
+    color: var(--text-dim); text-transform: uppercase;
+  }
+
+  #fxIndex {
+    font-size: 10px; color: var(--text-dim);
+    letter-spacing: .1em;
+  }
+
+  /* ── Effect pills below canvas ── */
+  #pills {
+    display: flex; gap: 6px; margin-top: 14px;
+    flex-wrap: wrap; justify-content: center;
+    width: 640px;
+  }
+  .pill {
+    font-size: 9px; letter-spacing: .15em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 2px;
+    border: .5px solid var(--border);
+    color: var(--text-dim);
+    cursor: default;
+    transition: all .2s;
+  }
+  .pill.active {
+    border-color: var(--purple);
+    color: var(--purple);
+    background: rgba(196,181,253,.07);
+  }
+</style>
+</head>
+<body>
+
+<div id="scene">
+  <div id="loading">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div id="loadMsg">starting up...</div>
+  </div>
+
+  <video id="vid" autoplay playsinline muted></video>
+  <canvas id="glCanvas" width="640" height="480"></canvas>
+  <canvas id="ovCanvas"  width="640" height="480"></canvas>
+
+  <div id="hud">
+    <div id="topBar">
+      <div id="effectLabel">fx · <span id="eName">Glitch</span></div>
+      <div id="handDots">
+        <div class="hdot" id="d0"></div>
+        <div class="hdot" id="d1"></div>
+      </div>
+    </div>
+    <div id="bottomBar">
+      <div id="hint">hold both hands up · clap to switch</div>
+      <div id="fxIndex">1 / 7</div>
+    </div>
+  </div>
+</div>
+
+<div id="pills"></div>
+
+<!-- MediaPipe CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+/* ─────────────────────────────────────────────
+   Constants & DOM refs
+───────────────────────────────────────────── */
+const W = 640, H = 480;
+const vid      = document.getElementById('vid');
+const glCanvas = document.getElementById('glCanvas');
+const ovCanvas = document.getElementById('ovCanvas');
+const ctx2     = ovCanvas.getContext('2d');
+const loadEl   = document.getElementById('loading');
+const loadMsg  = document.getElementById('loadMsg');
+const eNameEl  = document.getElementById('eName');
+const fxIndex  = document.getElementById('fxIndex');
+const d0       = document.getElementById('d0');
+const d1       = document.getElementById('d1');
+const pillsEl  = document.getElementById('pills');
+
+const EFFECTS = ['Glitch', 'Pixelate', 'Neon Edge', 'Oil Paint', 'Thermal', 'Mirror', 'Chromatic'];
+
+/* ─────────────────────────────────────────────
+   State
+───────────────────────────────────────────── */
+let curFx      = 0;
+let twoHands   = false;
+let clapState  = 'open';
+let lastClap   = 0;
+let t0         = Date.now();
+let handData   = null;
+
+let boxMin = [0.2, 0.2], boxMax = [0.8, 0.8];
+let tMin   = [0.2, 0.2], tMax   = [0.8, 0.8];
+
+/* ─────────────────────────────────────────────
+   Build effect pills
+───────────────────────────────────────────── */
+EFFECTS.forEach((name, i) => {
+  const p = document.createElement('div');
+  p.className = 'pill' + (i === 0 ? ' active' : '');
+  p.id = 'pill' + i;
+  p.textContent = name;
+  pillsEl.appendChild(p);
+});
+
+function updatePills() {
+  EFFECTS.forEach((_, i) => {
+    document.getElementById('pill' + i).className = 'pill' + (i === curFx ? ' active' : '');
+  });
+  fxIndex.textContent = (curFx + 1) + ' / ' + EFFECTS.length;
+  eNameEl.textContent = EFFECTS[curFx];
+  eNameEl.classList.remove('pop');
+  void eNameEl.offsetWidth;
+  eNameEl.classList.add('pop');
+}
+
+/* ─────────────────────────────────────────────
+   WebGL setup
+───────────────────────────────────────────── */
+const gl = glCanvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: false });
+
+const VS = `
+  attribute vec2 aPos;
+  attribute vec2 aUV;
+  varying   vec2 vUV;
+  void main() { vUV = aUV; gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+const FS = `
+precision mediump float;
+
+uniform sampler2D uCam;
+uniform float     uTime;
+uniform vec2      uBMin;
+uniform vec2      uBMax;
+uniform int       uFx;
+
+varying vec2 vUV;
+
+float rnd(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
+
+/* 0 ── Glitch */
+vec4 glitch(vec2 uv) {
+  float ts  = floor(uTime * 12.0) / 12.0;
+  float sy  = floor(uv.y  * 24.0) / 24.0;
+  float r   = rnd(vec2(sy, ts));
+  float sh  = (r - 0.5) * 0.08 * step(0.66, r);
+  vec2  ru  = uv + vec2(sh, 0.0);
+  float cr  = texture2D(uCam, ru + vec2( 0.009, 0.0)).r;
+  float cg  = texture2D(uCam, ru                    ).g;
+  float cb  = texture2D(uCam, ru - vec2( 0.009, 0.0)).b;
+  /* scanline flicker */
+  float sl  = 0.92 + 0.08 * step(0.95, rnd(vec2(floor(uv.y * 120.0), ts)));
+  return vec4(vec3(cr, cg, cb) * sl, 1.0);
+}
+
+/* 1 ── Pixelate */
+vec4 pixelate(vec2 uv) {
+  float px = 0.024;
+  vec2 pu  = floor(uv / px) * px + px * 0.5;
+  return texture2D(uCam, pu);
+}
+
+/* 2 ── Neon Edge */
+vec4 neonEdge(vec2 uv) {
+  float e  = 0.0032;
+  vec4 c   = texture2D(uCam, uv);
+  vec4 x1  = texture2D(uCam, uv + vec2( e, 0.0));
+  vec4 x2  = texture2D(uCam, uv - vec2( e, 0.0));
+  vec4 y1  = texture2D(uCam, uv + vec2(0.0,  e));
+  vec4 y2  = texture2D(uCam, uv - vec2(0.0,  e));
+  float ed = (abs(x1.r-x2.r)+abs(x1.g-x2.g)+abs(x1.b-x2.b)
+             +abs(y1.r-y2.r)+abs(y1.g-y2.g)+abs(y1.b-y2.b)) * 4.5;
+  vec3 base = c.rgb * 0.08;
+  vec3 glow = vec3(ed * 0.2, ed * 0.9, ed * 2.2);
+  return vec4(base + glow, 1.0);
+}
+
+/* 3 ── Oil Paint (kuwahara-lite) */
+vec4 oilPaint(vec2 uv) {
+  /* sample 4 quadrant windows, pick lowest variance */
+  vec3 means[4];
+  float vars[4];
+  vec2 steps[4];
+  steps[0] = vec2(-1.,-1.); steps[1] = vec2(1.,-1.);
+  steps[2] = vec2(-1., 1.); steps[3] = vec2(1., 1.);
+  float r = 0.009;
+  for (int q = 0; q < 4; q++) {
+    vec3 sum = vec3(0.); float sumSq = 0.; float n = 0.;
+    for (int i = 0; i <= 2; i++) {
+      for (int j = 0; j <= 2; j++) {
+        vec2 off = vec2(float(i)*steps[q].x, float(j)*steps[q].y) * r;
+        vec3 s   = texture2D(uCam, uv + off).rgb;
+        sum   += s; sumSq += dot(s, s); n += 1.0;
+      }
+    }
+    means[q] = sum / n;
+    vars[q]  = sumSq / n - dot(means[q], means[q]);
+  }
+  vec3 best = means[0]; float minV = vars[0];
+  if (vars[1] < minV) { best = means[1]; minV = vars[1]; }
+  if (vars[2] < minV) { best = means[2]; minV = vars[2]; }
+  if (vars[3] < minV) { best = means[3]; }
+  /* boost saturation */
+  float l = dot(best, vec3(0.299, 0.587, 0.114));
+  best    = mix(vec3(l), best, 1.85);
+  return vec4(best, 1.0);
+}
+
+/* 4 ── Thermal */
+vec4 thermal(vec2 uv) {
+  float l  = dot(texture2D(uCam, uv).rgb, vec3(0.299, 0.587, 0.114));
+  vec3 cold = vec3(0.05, 0.05, 0.6);
+  vec3 mid  = vec3(0.05, 0.85, 0.15);
+  vec3 hot  = vec3(1.0,  0.1,  0.0);
+  vec3 col  = mix(cold, mid, smoothstep(0.0, 0.5, l));
+  col       = mix(col,  hot, smoothstep(0.5, 1.0, l));
+  return vec4(col, 1.0);
+}
+
+/* 5 ── Mirror */
+vec4 mirror(vec2 uv) {
+  float cx = (uBMin.x + uBMax.x) * 0.5;
+  return texture2D(uCam, vec2(cx - abs(uv.x - cx), uv.y));
+}
+
+/* 6 ── Chromatic Drift */
+vec4 chroma(vec2 uv) {
+  float ang = uTime * 0.55;
+  vec2  d   = vec2(cos(ang), sin(ang)) * 0.014;
+  float r   = texture2D(uCam, uv + d      ).r;
+  float g   = texture2D(uCam, uv          ).g;
+  float b   = texture2D(uCam, uv - d      ).b;
+  return vec4(r, g, b, 1.0);
+}
+
+void main() {
+  vec2 uv  = vUV;
+  bool ins = uv.x >= uBMin.x && uv.x <= uBMax.x
+          && uv.y >= uBMin.y && uv.y <= uBMax.y;
+
+  vec4 norm = texture2D(uCam, uv);
+  if (!ins) { gl_FragColor = norm; return; }
+
+  vec4 f;
+  if      (uFx == 0) f = glitch  (uv);
+  else if (uFx == 1) f = pixelate(uv);
+  else if (uFx == 2) f = neonEdge(uv);
+  else if (uFx == 3) f = oilPaint(uv);
+  else if (uFx == 4) f = thermal (uv);
+  else if (uFx == 5) f = mirror  (uv);
+  else               f = chroma  (uv);
+
+  /* soft edge blend */
+  float ew = 0.013;
+  float em = min(
+    min(uv.x - uBMin.x, uBMax.x - uv.x),
+    min(uv.y - uBMin.y, uBMax.y - uv.y)
+  ) / ew;
+  gl_FragColor = mix(norm, f, smoothstep(0.0, 1.0, em));
+}
+`;
+
+function mkShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error('Shader error:', gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, mkShader(gl.VERTEX_SHADER,   VS));
+gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+/* Quad geometry: full-screen triangle strip */
+const vb = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1, -1,  0, 1,
+   1, -1,  1, 1,
+  -1,  1,  0, 0,
+   1,  1,  1, 0
+]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'aPos');
+const aUV  = gl.getAttribLocation(prog, 'aUV');
+gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
+gl.enableVertexAttribArray(aUV);  gl.vertexAttribPointer(aUV,  2, gl.FLOAT, false, 16, 8);
+
+const uCam  = gl.getUniformLocation(prog, 'uCam');
+const uTime = gl.getUniformLocation(prog, 'uTime');
+const uBMin = gl.getUniformLocation(prog, 'uBMin');
+const uBMax = gl.getUniformLocation(prog, 'uBMax');
+const uFx   = gl.getUniformLocation(prog, 'uFx');
+
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+/* ─────────────────────────────────────────────
+   Hand tracking helpers
+───────────────────────────────────────────── */
+const BONES = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function palmCenter(lm) {
+  let x = 0, y = 0;
+  [0, 5, 9, 13, 17].forEach(i => { x += lm[i].x; y += lm[i].y; });
+  return [x / 5, y / 5];
+}
+
+/* ─────────────────────────────────────────────
+   MediaPipe results callback
+───────────────────────────────────────────── */
+function onResults(r) {
+  handData = r;
+  const n = r.multiHandLandmarks ? r.multiHandLandmarks.length : 0;
+  twoHands = (n === 2);
+
+  /* indicator dots */
+  d0.className = 'hdot' + (n >= 1 ? ' on' : '');
+  d1.className = 'hdot' + (n >= 2 ? ' on' : '');
+
+  if (twoHands) {
+    const h1 = r.multiHandLandmarks[0];
+    const h2 = r.multiHandLandmarks[1];
+    const c1 = palmCenter(h1);
+    const c2 = palmCenter(h2);
+
+    const pad = 0.075;
+    tMin = [Math.max(0.0, Math.min(c1[0], c2[0]) - pad),
+            Math.max(0.0, Math.min(c1[1], c2[1]) - pad)];
+    tMax = [Math.min(1.0, Math.max(c1[0], c2[0]) + pad),
+            Math.min(1.0, Math.max(c1[1], c2[1]) + pad)];
+
+    const dist = Math.hypot(c1[0] - c2[0], c1[1] - c2[1]);
+    const now  = Date.now();
+
+    if (dist < 0.11 && clapState === 'open' && now - lastClap > 700) {
+      clapState = 'clapping';
+      lastClap  = now;
+      curFx     = (curFx + 1) % EFFECTS.length;
+      updatePills();
+    } else if (dist > 0.17) {
+      clapState = 'open';
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────
+   2-D overlay: skeleton + frame
+───────────────────────────────────────────── */
+function drawOverlay() {
+  ctx2.clearRect(0, 0, W, H);
+
+  /* mirror transform to match the flipped GL output */
+  ctx2.save();
+  ctx2.translate(W, 0);
+  ctx2.scale(-1, 1);
+
+  /* hand skeletons */
+  if (handData && handData.multiHandLandmarks) {
+    handData.multiHandLandmarks.forEach(hand => {
+      ctx2.strokeStyle = 'rgba(196,181,253,0.4)';
+      ctx2.lineWidth   = 1.5;
+      BONES.forEach(([a, b]) => {
+        ctx2.beginPath();
+        ctx2.moveTo(hand[a].x * W, hand[a].y * H);
+        ctx2.lineTo(hand[b].x * W, hand[b].y * H);
+        ctx2.stroke();
+      });
+      /* fingertip dots */
+      [4, 8, 12, 16, 20].forEach(i => {
+        ctx2.beginPath();
+        ctx2.arc(hand[i].x * W, hand[i].y * H, 3.5, 0, Math.PI * 2);
+        ctx2.fillStyle = 'rgba(196,181,253,0.9)';
+        ctx2.fill();
+      });
+    });
+  }
+
+  /* dynamic frame */
+  if (twoHands) {
+    const elapsed = (Date.now() - t0) / 1000;
+    const pulse   = 0.5 + 0.4 * Math.sin(elapsed * 3.5);
+    const alpha   = 0.55 + 0.35 * pulse;
+
+    const x1 = boxMin[0] * W, y1 = boxMin[1] * H;
+    const x2 = boxMax[0] * W, y2 = boxMax[1] * H;
+    const bw = x2 - x1,      bh = y2 - y1;
+    const cl = Math.min(bw, bh) * 0.14;
+
+    /* dashed fill rect */
+    ctx2.setLineDash([3, 7]);
+    ctx2.strokeStyle = `rgba(196,181,253,${alpha * 0.22})`;
+    ctx2.lineWidth   = 0.75;
+    ctx2.strokeRect(x1, y1, bw, bh);
+    ctx2.setLineDash([]);
+
+    /* corner brackets */
+    ctx2.strokeStyle = `rgba(196,181,253,${alpha})`;
+    ctx2.lineWidth   = 2;
+    [
+      [x1, y1,  1,  1],
+      [x2, y1, -1,  1],
+      [x1, y2,  1, -1],
+      [x2, y2, -1, -1],
+    ].forEach(([cx, cy, dx, dy]) => {
+      ctx2.beginPath();
+      ctx2.moveTo(cx + dx * cl, cy);
+      ctx2.lineTo(cx, cy);
+      ctx2.lineTo(cx, cy + dy * cl);
+      ctx2.stroke();
+    });
+
+    /* label */
+    ctx2.fillStyle  = `rgba(196,181,253,${alpha * 0.85})`;
+    ctx2.font       = `bold 10px 'Courier New'`;
+    ctx2.textAlign  = 'left';
+    ctx2.fillText(EFFECTS[curFx].toUpperCase(), x1 + 4, y1 - 6);
+  }
+
+  ctx2.restore();
+}
+
+/* ─────────────────────────────────────────────
+   Lerp helpers
+───────────────────────────────────────────── */
+function lerp2(a, b, k) {
+  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+}
+
+/* ─────────────────────────────────────────────
+   Main render loop
+───────────────────────────────────────────── */
+function loop() {
+  requestAnimationFrame(loop);
+  if (!vid.readyState || vid.readyState < 2) return;
+
+  const k = 0.1;
+  if (twoHands) {
+    boxMin = lerp2(boxMin, tMin, k);
+    boxMax = lerp2(boxMax, tMax, k);
+  } else {
+    /* retract to center when no hands */
+    boxMin = lerp2(boxMin, [0.35, 0.35], k * 0.4);
+    boxMax = lerp2(boxMax, [0.65, 0.65], k * 0.4);
+  }
+
+  /* Upload video frame to GPU */
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  try {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+  } catch (e) { return; }
+
+  const ts = (Date.now() - t0) / 1000;
+
+  gl.uniform1i(uCam,  0);
+  gl.uniform1f(uTime, ts);
+  gl.uniform1i(uFx,   curFx);
+
+  /* Texture coords are Y-flipped by UNPACK_FLIP_Y but X is already
+     mirrored by the webcam — we flip X in shader space so the image
+     reads naturally, and map the bounding box accordingly.          */
+  const shaderBMin = twoHands ? [1.0 - boxMax[0], boxMin[1]] : [0.5, 0.5];
+  const shaderBMax = twoHands ? [1.0 - boxMin[0], boxMax[1]] : [0.5, 0.5];
+
+  gl.uniform2fv(uBMin, shaderBMin);
+  gl.uniform2fv(uBMax, shaderBMax);
+
+  gl.viewport(0, 0, W, H);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  /* 2-D overlay (skeleton + frame brackets) */
+  drawOverlay();
+}
+
+/* ─────────────────────────────────────────────
+   Initialise everything
+───────────────────────────────────────────── */
+async function init() {
+  try {
+    loadMsg.textContent = 'requesting camera…';
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: W, height: H, facingMode: 'user' },
+      audio: false
+    });
+    vid.srcObject = stream;
+    await new Promise(resolve => vid.onloadedmetadata = resolve);
+
+    loadMsg.textContent = 'loading hand model…';
+
+    const hands = new Hands({
+      locateFile: f =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+    });
+    hands.setOptions({
+      maxNumHands:            2,
+      modelComplexity:        1,
+      minDetectionConfidence: 0.70,
+      minTrackingConfidence:  0.55
+    });
+    hands.onResults(onResults);
+
+    const camera = new Camera(vid, {
+      onFrame: async () => { await hands.send({ image: vid }); },
+      width: W, height: H
+    });
+    await camera.start();
+
+    /* Fade out loading overlay */
+    loadEl.classList.add('fade');
+    setTimeout(() => loadEl.classList.add('gone'), 500);
+
+    t0 = Date.now();
+    loop();
+
+  } catch (err) {
+    loadMsg.textContent = '⚠ ' + err.message;
+    console.error(err);
+  }
+}
+
+/* Keyboard shortcut: spacebar cycles effects too */
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    curFx = (curFx + 1) % EFFECTS.length;
+    updatePills();
+  }
+  /* number keys 1–7 */
+  const n = parseInt(e.key);
+  if (n >= 1 && n <= EFFECTS.length) {
+    curFx = n - 1;
+    updatePills();
+  }
+});
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
